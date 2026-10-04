@@ -4,7 +4,14 @@
 #include <cuda_runtime.h>
 #include "tensor.cuh"
 
-template<int TILE, int BLOCK_X, int BLOCK_Y>
+template<
+    int TILE,
+    int BLOCK_X,
+    int BLOCK_Y,
+    bool CHECK_M,
+    bool CHECK_N,
+    bool CHECK_K
+>
 __device__ void loadSharedMemory(
     DeviceTensorView A,
     DeviceTensorView B,
@@ -25,8 +32,16 @@ __device__ void loadSharedMemory(
         int row = globalY + localY;
         int kB = localY + globalStep;
 
-        bool validARow = row < A.shape[0];
-        bool validBRow = kB < B.shape[0];
+        // Disabled checks stay `true` at compile time, so the
+        // compiler drops them from the conditions below.
+        bool validARow = true;
+        bool validBRow = true;
+
+        if constexpr (CHECK_M)
+            validARow = row < A.shape[0];
+
+        if constexpr (CHECK_K)
+            validBRow = kB < B.shape[0];
 
         size_t aRow = validARow ? row * A.strides[0] : 0;
         size_t bRow = validBRow ? kB * B.strides[0] : 0;
@@ -38,7 +53,14 @@ __device__ void loadSharedMemory(
             int col = globalX + localX;
             int kA = localX + globalStep;
 
-            if (validARow && kA < A.shape[1]) {
+            // ==================== A -> As ====================
+
+            bool validA = validARow;
+
+            if constexpr (CHECK_K)
+                validA = validA && kA < A.shape[1];
+
+            if (validA) {
                 As[localY][localX] =
                     A.data[aRow + kA * A.strides[1]];
             }
@@ -46,7 +68,14 @@ __device__ void loadSharedMemory(
                 As[localY][localX] = 0.0f;
             }
 
-            if (validBRow && col < B.shape[1]) {
+            // ==================== B -> Bs ====================
+
+            bool validB = validBRow;
+
+            if constexpr (CHECK_N)
+                validB = validB && col < B.shape[1];
+
+            if (validB) {
                 Bs[localY][localX] =
                     B.data[bRow + col * B.strides[1]];
             }
@@ -139,7 +168,9 @@ template<
     int TILE,
     int BLOCK_X,
     int BLOCK_Y,
-    bool CHECK_BOUNDS
+    bool CHECK_BOUNDS,
+    bool CHECK_M,
+    bool CHECK_N
 >
 __device__ void writeRes(
     DeviceTensorView C,
@@ -172,7 +203,18 @@ __device__ void writeRes(
         int row = globalY + localY;
         int col = globalX + localX;
 
-        if (row >= C.shape[0] || col >= C.shape[1]) continue;
+        if constexpr (CHECK_M && CHECK_N) {
+            if (row >= C.shape[0] || col >= C.shape[1])
+                continue;
+        }
+        else if constexpr (CHECK_M) {
+            if (row >= C.shape[0])
+                continue;
+        }
+        else if constexpr (CHECK_N) {
+            if (col >= C.shape[1])
+                continue;
+        }
 
         C.data[
             row * C.strides[0]
@@ -181,7 +223,14 @@ __device__ void writeRes(
     }
 }
 
-template<int TILE, int BLOCK_X, int BLOCK_Y>
+template<
+    int TILE,
+    int BLOCK_X,
+    int BLOCK_Y,
+    bool CHECK_M,
+    bool CHECK_N,
+    bool CHECK_K
+>
 __global__ void deviceMatMul(
     DeviceTensorView A,
     DeviceTensorView B,
@@ -223,7 +272,11 @@ __global__ void deviceMatMul(
 
             for (int loadCount = 0; loadCount < loadCounts; loadCount++)
             {
-                loadSharedMemory<TILE, BLOCK_X, BLOCK_Y>(
+                loadSharedMemory<
+                    TILE, BLOCK_X,
+                    BLOCK_Y, CHECK_M,
+                    CHECK_N, CHECK_K
+                >(
                     A, B,
                     As, Bs,
                     tileX, tileY,
@@ -232,7 +285,10 @@ __global__ void deviceMatMul(
 
                 __syncthreads();
 
-                evaluateMatMul<TILE, BLOCK_X, BLOCK_Y, CHECK_BOUNDS>(
+                evaluateMatMul<
+                    TILE, BLOCK_X,
+                    BLOCK_Y, CHECK_BOUNDS
+                >(
                     As, Bs,
                     threadResults
                 );
@@ -240,11 +296,50 @@ __global__ void deviceMatMul(
                 __syncthreads();
             }
 
-            writeRes<TILE, BLOCK_X, BLOCK_Y, CHECK_BOUNDS>(
+            writeRes<
+                TILE, BLOCK_X,
+                BLOCK_Y, CHECK_BOUNDS,
+                CHECK_M, CHECK_N
+            >(
                 C,
                 tileX, tileY,
                 threadResults
             );
+        }
+    }
+}
+
+// Bridges runtime bounds-check flags to compile-time template arguments:
+// each of the 8 combinations launches its own kernel instantiation.
+template<int TILE, int BLOCK_X, int BLOCK_Y>
+void launchDeviceMatMul(
+    dim3 grid,
+    dim3 block,
+    DeviceTensorView A,
+    DeviceTensorView B,
+    DeviceTensorView C,
+    bool checkM,
+    bool checkN,
+    bool checkK
+) {
+    if (checkM) {
+        if (checkN) {
+            if (checkK) deviceMatMul<TILE, BLOCK_X, BLOCK_Y, true,  true,  true ><<<grid, block>>>(A, B, C);
+            else        deviceMatMul<TILE, BLOCK_X, BLOCK_Y, true,  true,  false><<<grid, block>>>(A, B, C);
+        }
+        else {
+            if (checkK) deviceMatMul<TILE, BLOCK_X, BLOCK_Y, true,  false, true ><<<grid, block>>>(A, B, C);
+            else        deviceMatMul<TILE, BLOCK_X, BLOCK_Y, true,  false, false><<<grid, block>>>(A, B, C);
+        }
+    }
+    else {
+        if (checkN) {
+            if (checkK) deviceMatMul<TILE, BLOCK_X, BLOCK_Y, false, true,  true ><<<grid, block>>>(A, B, C);
+            else        deviceMatMul<TILE, BLOCK_X, BLOCK_Y, false, true,  false><<<grid, block>>>(A, B, C);
+        }
+        else {
+            if (checkK) deviceMatMul<TILE, BLOCK_X, BLOCK_Y, false, false, true ><<<grid, block>>>(A, B, C);
+            else        deviceMatMul<TILE, BLOCK_X, BLOCK_Y, false, false, false><<<grid, block>>>(A, B, C);
         }
     }
 }
@@ -268,6 +363,7 @@ DeviceTensor hostMatmul(
 
     int M = A.getShape()[0];
     int N = B.getShape()[1];
+    int K = A.getShape()[1];
 
     DeviceTensor C({ M, N });
 
@@ -277,12 +373,18 @@ DeviceTensor hostMatmul(
         (M + TILE - 1) / TILE
     );
 
-    deviceMatMul<TILE, BLOCK_X, BLOCK_Y>
-        <<<grid, block >>> (
-            A.view(),
-            B.view(),
-            C.view()
-            );
+    bool CHECK_M =
+        M % TILE != 0;
+    bool CHECK_N =
+        N % TILE != 0;
+    bool CHECK_K =
+        K % TILE != 0;
+
+    launchDeviceMatMul<TILE, BLOCK_X, BLOCK_Y>(
+        grid, block,
+        A.view(), B.view(), C.view(),
+        CHECK_M, CHECK_N, CHECK_K
+    );
 
     cudaError_t err = cudaGetLastError();
 
@@ -405,14 +507,20 @@ BenchmarkResult benchmarkMatMul(
         (M + TILE - 1) / TILE
     );
 
+    bool CHECK_M =
+        M % TILE != 0;
+    bool CHECK_N =
+        N % TILE != 0;
+    bool CHECK_K =
+        K % TILE != 0;
+
     // Warm-up launches: absorb one-time costs (module load, caches).
     for (int i = 0; i < warmupIters; i++) {
-        deviceMatMul<TILE, BLOCK_X, BLOCK_Y>
-            <<<grid, block >>> (
-                A.view(),
-                B.view(),
-                C.view()
-                );
+        launchDeviceMatMul<TILE, BLOCK_X, BLOCK_Y>(
+            grid, block,
+            A.view(), B.view(), C.view(),
+            CHECK_M, CHECK_N, CHECK_K
+        );
     }
 
     cudaError_t err = cudaGetLastError();
@@ -439,12 +547,11 @@ BenchmarkResult benchmarkMatMul(
     cudaEventRecord(start.get());
 
     for (int i = 0; i < timedIters; i++) {
-        deviceMatMul<TILE, BLOCK_X, BLOCK_Y>
-            <<<grid, block >>> (
-                A.view(),
-                B.view(),
-                C.view()
-                );
+        launchDeviceMatMul<TILE, BLOCK_X, BLOCK_Y>(
+            grid, block,
+            A.view(), B.view(), C.view(),
+            CHECK_M, CHECK_N, CHECK_K
+        );
     }
 
     cudaEventRecord(stop.get());
