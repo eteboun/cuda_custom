@@ -79,6 +79,7 @@
   <ItemGroup>
     <CudaCompile Include="main.cu" />
     <CudaCompile Include="matmul.cu" />
+    <CudaCompile Include="tests.cu" />
     <CudaCompile Include="tensor.cuh">
       <FileType>Document</FileType>
     </CudaCompile>
@@ -88,7 +89,11 @@
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="tests.cuh" />
     <ClInclude Include="utils.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="profile.bat" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
