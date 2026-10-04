@@ -134,8 +134,19 @@ int runSize(
         << " | " << std::setw(7) << cpu.avgMs / cublas.avgMs << "x CPU\n"
         << std::defaultfloat;
 
-    // Best configuration from the earlier sweep (register tiling, 16 results/thread).
+    // Perfect fit: one thread per output element (TILE == BLOCK_X == BLOCK_Y).
+    failures += !runBenchmark< 8,  8,  8>("perfect", A, B, expected, cpu, cublas);
+    failures += !runBenchmark<16, 16, 16>("perfect", A, B, expected, cpu, cublas);
+    failures += !runBenchmark<32, 32, 32>("perfect", A, B, expected, cpu, cublas);
+
+    // Multiple results per thread (register tiling).
+    failures += !runBenchmark<16,  8,  8>("multi", A, B, expected, cpu, cublas);
+    failures += !runBenchmark<32, 16, 16>("multi", A, B, expected, cpu, cublas);
+    failures += !runBenchmark<32,  8,  8>("multi", A, B, expected, cpu, cublas);
+    failures += !runBenchmark<32, 32,  8>("multi", A, B, expected, cpu, cublas);
     failures += !runBenchmark<64, 16, 16>("multi", A, B, expected, cpu, cublas);
+    failures += !runBenchmark<64, 32,  8>("multi", A, B, expected, cpu, cublas);
+    failures += !runBenchmark<64,  8,  8>("multi", A, B, expected, cpu, cublas);
 
     return failures;
 }
@@ -143,7 +154,13 @@ int runSize(
 int runBenchmarks() {
     int failures = 0;
 
+    failures += runSize(512, 512, 512);
+    failures += runSize(1024, 1024, 1024);
     failures += runSize(2048, 2048, 2048);
+    failures += runSize(4096, 4096, 4096);
+
+    // Non-square, non-tile-aligned shape.
+    failures += runSize(1000, 3000, 2000);
 
     std::cout << '\n'
         << (failures == 0 ? "All configurations passed.\n"
