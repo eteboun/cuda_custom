@@ -89,6 +89,7 @@
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="matmul_simt.cuh" />
     <ClInclude Include="tests.cuh" />
     <ClInclude Include="utils.h" />
   </ItemGroup>

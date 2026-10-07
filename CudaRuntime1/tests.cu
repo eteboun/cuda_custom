@@ -37,35 +37,69 @@ bool compare(
     return true;
 }
 
-template<int TILE, int BLOCK_X, int BLOCK_Y>
+struct BestConfig {
+    double gflops = 0.0;
+    float avgMs = 0.0f;
+    int tileM = 0;
+    int tileN = 0;
+    int tileK = 0;
+    int blockX = 0;
+    int blockY = 0;
+};
+
+template<int TILE_M, int TILE_N, int TILE_K, int BLOCK_X, int BLOCK_Y>
 bool runBenchmark(
-    const char* kind,
     const DeviceTensor& A,
     const DeviceTensor& B,
     const std::vector<float>& expected,
     const BenchmarkResult& cpu,
-    const BenchmarkResult& cublas
+    const BenchmarkResult& cublas,
+    BestConfig& best,
+    int warmupIters,
+    int timedIters
 ) {
     static_assert(BLOCK_X * BLOCK_Y <= 1024,
         "a block cannot have more than 1024 threads");
-    static_assert(2 * TILE * TILE * sizeof(float) <= 48 * 1024,
+    static_assert(
+        (TILE_M * TILE_K + TILE_K * TILE_N) * sizeof(float) <= 48 * 1024,
         "static shared memory is limited to 48 KB per block");
 
-    constexpr int xPieces = (TILE + BLOCK_X - 1) / BLOCK_X;
-    constexpr int yPieces = (TILE + BLOCK_Y - 1) / BLOCK_Y;
+    constexpr int xPieces = (TILE_N + BLOCK_X - 1) / BLOCK_X;
+    constexpr int yPieces = (TILE_M + BLOCK_Y - 1) / BLOCK_Y;
     constexpr int resultsPerThread = xPieces * yPieces;
+
+    // perfect: one output per thread; square/wide/tall: shape of the block.
+    const char* kind =
+        (resultsPerThread == 1) ? "perfect" :
+        (BLOCK_X == BLOCK_Y) ? "square" :
+        (BLOCK_X > BLOCK_Y) ? "wide" : "tall";
 
     // Correctness: one separate launch, checked against the CPU result.
     std::vector<float> actual =
-        hostMatmul<TILE, BLOCK_X, BLOCK_Y>(A, B).toHost();
+        hostMatmul<TILE_M, TILE_N, TILE_K, BLOCK_X, BLOCK_Y>(A, B).toHost();
     bool passed = compare(actual, expected);
 
-    BenchmarkResult result = benchmarkMatMul<TILE, BLOCK_X, BLOCK_Y>(A, B);
+    BenchmarkResult result =
+        benchmarkMatMul<TILE_M, TILE_N, TILE_K, BLOCK_X, BLOCK_Y>(
+            A, B, warmupIters, timedIters
+        );
+
+    if (passed && result.gflops > best.gflops) {
+        best.gflops = result.gflops;
+        best.avgMs = result.avgMs;
+        best.tileM = TILE_M;
+        best.tileN = TILE_N;
+        best.tileK = TILE_K;
+        best.blockX = BLOCK_X;
+        best.blockY = BLOCK_Y;
+    }
 
     std::cout
         << "  " << (passed ? "[PASS]" : "[FAIL]")
         << " " << std::left << std::setw(7) << kind << std::right
-        << " TILE=" << std::setw(2) << TILE
+        << " TILE=" << std::setw(3) << TILE_M
+        << "x" << std::setw(3) << TILE_N
+        << "x" << std::setw(2) << TILE_K
         << " BLOCK=" << std::setw(2) << BLOCK_X
         << "x" << std::left << std::setw(2) << BLOCK_Y << std::right
         << " threads=" << std::setw(4) << BLOCK_X * BLOCK_Y
@@ -85,7 +119,9 @@ bool runBenchmark(
 int runSize(
     int M,
     int K,
-    int N
+    int N,
+    int warmupIters,
+    int timedIters
 ) {
     std::vector<float> hostA(static_cast<size_t>(M) * K);
     std::vector<float> hostB(static_cast<size_t>(K) * N);
@@ -101,7 +137,9 @@ int runSize(
     }
 
     std::cout << "\n[BENCH] "
-        << M << "x" << K << " @ " << K << "x" << N << '\n';
+        << M << "x" << K << " @ " << K << "x" << N
+        << "  (warmup=" << warmupIters
+        << ", avg over " << timedIters << " runs)\n";
 
     std::vector<float> expected;
     BenchmarkResult cpu =
@@ -120,8 +158,9 @@ int runSize(
     int failures = 0;
 
     std::vector<float> cublasResult;
-    BenchmarkResult cublas =
-        benchmarkCublasMatMul(A, B, cublasResult);
+    BenchmarkResult cublas = benchmarkCublasMatMul(
+        A, B, cublasResult, warmupIters, timedIters
+    );
     bool cublasPassed = compare(cublasResult, expected);
     failures += !cublasPassed;
 
@@ -134,19 +173,59 @@ int runSize(
         << " | " << std::setw(7) << cpu.avgMs / cublas.avgMs << "x CPU\n"
         << std::defaultfloat;
 
-    // Perfect fit: one thread per output element (TILE == BLOCK_X == BLOCK_Y).
-    failures += !runBenchmark< 8,  8,  8>("perfect", A, B, expected, cpu, cublas);
-    failures += !runBenchmark<16, 16, 16>("perfect", A, B, expected, cpu, cublas);
-    failures += !runBenchmark<32, 32, 32>("perfect", A, B, expected, cpu, cublas);
+    BestConfig best;
 
-    // Multiple results per thread (register tiling).
-    failures += !runBenchmark<16,  8,  8>("multi", A, B, expected, cpu, cublas);
-    failures += !runBenchmark<32, 16, 16>("multi", A, B, expected, cpu, cublas);
-    failures += !runBenchmark<32,  8,  8>("multi", A, B, expected, cpu, cublas);
-    failures += !runBenchmark<32, 32,  8>("multi", A, B, expected, cpu, cublas);
-    failures += !runBenchmark<64, 16, 16>("multi", A, B, expected, cpu, cublas);
-    failures += !runBenchmark<64, 32,  8>("multi", A, B, expected, cpu, cublas);
-    failures += !runBenchmark<64,  8,  8>("multi", A, B, expected, cpu, cublas);
+    // Reference: the best square tiles from the previous sweep.
+    failures += !runBenchmark< 32,  32,  32,   8,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 32,  32,  32,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 48,  48,  48,  24,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 48,  48,  48,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  64,  16,  16>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  64,  32,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  64,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  64,   8,  16>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+
+    // TILE_K sweep on the 64x64 output tile: less shared memory per block
+    // (more blocks per SM) against more __syncthreads per output tile.
+    // TILE_K = 24 does not divide any test size, so the K edge is exercised.
+    failures += !runBenchmark< 64,  64,   8,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  16,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  24,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  32,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  16,  16,  16>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  64,  32,  16,  16>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+
+    // Rectangular output tiles (TILE_M != TILE_N).
+    failures += !runBenchmark< 32,  64,  32,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  32,  32,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark<128,  32,  32,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 32, 128,  32,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark<128,  64,  16,  16,  16>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64, 128,  16,  32,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 96,  64,  16,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64,  96,  16,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+
+    // Large output tiles: 64 results per thread, small TILE_K so shared
+    // memory stays under 48 KB.
+    failures += !runBenchmark<128,  64,  16,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark< 64, 128,  16,  16,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark<128, 128,   8,  16,  16>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark<128, 128,  16,  16,  16>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+    failures += !runBenchmark<128, 128,   8,  32,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
+
+    if (best.gflops > 0.0) {
+        std::cout
+            << "\n  [BEST] TILE=" << best.tileM
+            << "x" << best.tileN << "x" << best.tileK
+            << " BLOCK=" << best.blockX << "x" << best.blockY
+            << " | " << std::fixed << std::setprecision(4)
+            << best.avgMs << " ms"
+            << " | " << std::setprecision(1)
+            << best.gflops << " GFLOP/s"
+            << " | " << 100.0 * best.gflops / cublas.gflops
+            << "% cuBLAS\n"
+            << std::defaultfloat;
+    }
 
     return failures;
 }
@@ -154,13 +233,13 @@ int runSize(
 int runBenchmarks() {
     int failures = 0;
 
-    failures += runSize(512, 512, 512);
-    failures += runSize(1024, 1024, 1024);
-    failures += runSize(2048, 2048, 2048);
-    failures += runSize(4096, 4096, 4096);
-
-    // Non-square, non-tile-aligned shape.
-    failures += runSize(1000, 3000, 2000);
+    // Iteration counts are chosen so each timed loop lasts long enough
+    // (hundreds of ms) to average out launch jitter and clock changes:
+    // a 512x512 run takes ~0.1 ms, a 4096x4096 run tens of ms.
+    // Warm-up also lets the laptop GPU reach a steady boost clock.
+    failures += runSize(512, 512, 512, 50, 1000);
+    failures += runSize(2048, 2048, 2048, 20, 200);
+    failures += runSize(4096, 4096, 4096, 10, 50);
 
     std::cout << '\n'
         << (failures == 0 ? "All configurations passed.\n"
