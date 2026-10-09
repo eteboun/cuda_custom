@@ -79,6 +79,7 @@
   <ItemGroup>
     <CudaCompile Include="main.cu" />
     <CudaCompile Include="matmul.cu" />
+    <CudaCompile Include="matmul_wmma.cu" />
     <CudaCompile Include="tests.cu" />
     <CudaCompile Include="tensor.cuh">
       <FileType>Document</FileType>
@@ -90,6 +91,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="matmul_simt.cuh" />
+    <ClInclude Include="matmul_simt_host.cuh" />
+    <ClInclude Include="matmul_wmma.cuh" />
+    <ClInclude Include="matmul_wmma_host.cuh" />
     <ClInclude Include="tests.cuh" />
     <ClInclude Include="utils.h" />
   </ItemGroup>

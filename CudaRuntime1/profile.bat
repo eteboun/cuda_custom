@@ -1,7 +1,7 @@
 @echo off
 
 echo === Compiling ===
-nvcc -O3 -arch=sm_89 -lineinfo main.cu matmul.cu tests.cu utils.cpp -o test.exe
+nvcc -O3 -arch=sm_89 -lineinfo main.cu matmul.cu matmul_wmma.cu tests.cu utils.cpp -o test.exe
 if errorlevel 1 exit /b 1
 
 echo === Profiling deviceMatMul ===

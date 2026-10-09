@@ -185,13 +185,16 @@ BenchmarkResult benchmarkCublasMatMul(
     int warmupIters,
     int timedIters
 ) {
-    if (A.getShape().size() != 2 || B.getShape().size() != 2) {
+    ConstDeviceTensorView a = A.view();
+    ConstDeviceTensorView b = B.view();
+
+    if (a.ndim != 2 || b.ndim != 2) {
         throw std::invalid_argument(
             "matmul requires both tensors to be 2-dimensional"
         );
     }
 
-    if (A.getShape()[1] != B.getShape()[0]) {
+    if (a.shape[1] != b.shape[0]) {
         throw std::invalid_argument(
             "matmul dimension mismatch: A.shape[1] must equal B.shape[0]"
         );
@@ -203,14 +206,13 @@ BenchmarkResult benchmarkCublasMatMul(
         );
     }
 
-    int M = A.getShape()[0];
-    int K = A.getShape()[1];
-    int N = B.getShape()[1];
+    // cublasSgemm takes int dimensions.
+    int M = static_cast<int>(a.shape[0]);
+    int K = static_cast<int>(a.shape[1]);
+    int N = static_cast<int>(b.shape[1]);
 
-    DeviceTensor deviceC({ M, N });
+    DeviceTensor deviceC({ a.shape[0], b.shape[1] });
 
-    const float* a = A.view().data;
-    const float* b = B.view().data;
     float* c = deviceC.view().data;
 
     // Handle creation is slow and done once, so it stays out of the timing.
@@ -218,7 +220,7 @@ BenchmarkResult benchmarkCublasMatMul(
 
     // Warm-up also absorbs cuBLAS's one-time kernel selection and loading.
     for (int i = 0; i < warmupIters; i++) {
-        cublasRowMajorSgemm(handle.get(), a, b, c, M, K, N);
+        cublasRowMajorSgemm(handle.get(), a.data, b.data, c, M, K, N);
     }
 
     cudaError_t err = cudaDeviceSynchronize();
@@ -236,7 +238,7 @@ BenchmarkResult benchmarkCublasMatMul(
     cudaEventRecord(start.get());
 
     for (int i = 0; i < timedIters; i++) {
-        cublasRowMajorSgemm(handle.get(), a, b, c, M, K, N);
+        cublasRowMajorSgemm(handle.get(), a.data, b.data, c, M, K, N);
     }
 
     cudaEventRecord(stop.get());

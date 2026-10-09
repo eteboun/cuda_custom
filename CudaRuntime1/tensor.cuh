@@ -5,157 +5,170 @@
 #include <vector>
 #include <utility>
 #include <stdexcept>
-#include <cuda_runtime.h>
 #include "utils.h"
+
+#include <cuda_runtime.h>
+#include "buffer.cuh"
 
 constexpr int MAX_DIMS = 8;
 
+struct BuildConfig {
+    size_t shape[MAX_DIMS];
+    size_t strides[MAX_DIMS];
+    size_t numel;
+    int ndim;
+};
+
 struct DeviceTensorView {
     float* data;
-    int shape[MAX_DIMS];
+    size_t shape[MAX_DIMS];
+    size_t strides[MAX_DIMS];
+    int ndim;
+};
+
+struct ConstDeviceTensorView {
+    const float* data;
+    size_t shape[MAX_DIMS];
     size_t strides[MAX_DIMS];
     int ndim;
 };
 
 class DeviceTensor {
 private:
-    float* data;
-    size_t numel;
-    std::vector<int> shape;
-    std::vector<size_t> strides;
+    DeviceBuffer<float> buffer;
+    BuildConfig _config{};
 
-    void setStrides() {
-        strides.resize(shape.size());
-
-        size_t stride = 1;
-
-        for (size_t i = shape.size(); i-- > 0;) {
-            strides[i] = stride;
-            stride *= shape[i];
+    static BuildConfig _cfg(
+        const std::vector<size_t>& newShape
+    ) {
+        if (newShape.empty()) {
+            throw std::invalid_argument(
+                "Tensor shape cannot be empty."
+            );
         }
-    }
 
-    static void validateShape(const std::vector<int>& shape) {
-        if (shape.size() > MAX_DIMS) {
+        if (newShape.size() > MAX_DIMS) {
             throw std::invalid_argument(
                 "Tensor exceeds maximum number of dimensions."
             );
         }
 
-        for (int dim : shape) {
-            if (dim < 0) {
+        for (size_t dim : newShape) {
+            if (dim == 0) {
                 throw std::invalid_argument(
-                    "Tensor dimensions cannot be negative."
+                    "Tensor dimensions cannot be zero."
                 );
             }
         }
-    }
 
-    void validateNewShape(const std::vector<int>& newShape) const {
-        validateShape(newShape);
+        BuildConfig cfg{};
+        cfg.ndim = static_cast<int>(newShape.size());
 
-        if (calcNumel(newShape) != numel) {
-            throw std::invalid_argument(
-                "New shape must have the same number of elements."
-            );
-        }
-    }
+        size_t stride = 1;
 
-    void clear() {
-        numel = 0;
-        data = nullptr;
-        shape.clear();
-        strides.clear();
-    }
-
-public:
-    DeviceTensor(const std::vector<int>& shape) {
-        validateShape(shape);
-
-        this->shape = shape;
-        numel = calcNumel(shape);
-        setStrides();
-
-        data = nullptr;
-
-        if (numel > 0) {
-            cudaError_t err = cudaMalloc(
-                &data,
-                numel * sizeof(float)
-            );
-
-            if (err != cudaSuccess) {
-                throw std::runtime_error(
-                    cudaGetErrorString(err)
-                );
+        for (size_t i = newShape.size(); i-- > 0;) {
+            if (stride > std::numeric_limits<size_t>::max() / newShape[i]) {
+                throw std::overflow_error("Tensor size overflow");
             }
 
-            err = cudaMemset(
-                data,
-                0,
-                numel * sizeof(float)
-            );
-
-            if (err != cudaSuccess) {
-                cudaFree(data);
-                data = nullptr;
-
-                throw std::runtime_error(
-                    cudaGetErrorString(err)
-                );
-            }
+            cfg.shape[i] = newShape[i];
+            cfg.strides[i] = stride;
+            stride *= newShape[i];
         }
+
+        cfg.numel = stride;
+        return cfg;
     }
 
-    DeviceTensor(
+    void build(
         const std::vector<float>& hostData,
-        const std::vector<int>& shape
-    ) : DeviceTensor(shape) {
+        const std::vector<size_t>& newShape
+    ) {
+        BuildConfig cfg = _cfg(newShape);
 
-        if (numel != hostData.size()) {
+        if (cfg.numel != hostData.size()) {
             throw std::invalid_argument(
                 "Shape and data size do not match."
             );
         }
 
+        DeviceBuffer<float> newBuffer(cfg.numel);
+
         cudaError_t err = cudaMemcpy(
-            data,
+            newBuffer.data(),
             hostData.data(),
-            numel * sizeof(float),
+            cfg.numel * sizeof(float),
             cudaMemcpyHostToDevice
         );
 
         if (err != cudaSuccess) {
-            cudaFree(data);
-            data = nullptr;
-
-            throw std::runtime_error(
-                cudaGetErrorString(err)
-            );
+            throw std::runtime_error(cudaGetErrorString(err));
         }
+
+        _config = cfg;
+        buffer = std::move(newBuffer);
     }
 
-    DeviceTensorView view() const {
-        DeviceTensorView v;
+    void build(
+        const std::vector<size_t>& newShape
+    ) {
+        BuildConfig cfg = _cfg(newShape);
 
-        v.data = data;
-        v.ndim = static_cast<int>(shape.size());
+        DeviceBuffer<float> newBuffer(cfg.numel);
+
+        _config = cfg;
+        buffer = std::move(newBuffer);
+    }
+
+public:
+    explicit DeviceTensor(
+        const std::vector<size_t>& newShape
+    ) {
+        build(newShape);
+    }
+
+    DeviceTensor(
+        const std::vector<float>& hostData,
+        const std::vector<size_t>& newShape
+    ) {
+        build(hostData, newShape);
+    }
+
+    ConstDeviceTensorView view() const {
+        ConstDeviceTensorView v{};
+
+        v.data = buffer.data();
+        v.ndim = _config.ndim;
 
         for (int i = 0; i < v.ndim; ++i) {
-            v.shape[i] = shape[i];
-            v.strides[i] = strides[i];
+            v.shape[i] = _config.shape[i];
+            v.strides[i] = _config.strides[i];
+        }
+
+        return v;
+    }
+
+    DeviceTensorView view() {
+        DeviceTensorView v{};
+
+        v.data = buffer.data();
+        v.ndim = _config.ndim;
+
+        for (int i = 0; i < v.ndim; ++i) {
+            v.shape[i] = _config.shape[i];
+            v.strides[i] = _config.strides[i];
         }
 
         return v;
     }
 
     std::vector<float> toHost() const {
-        std::vector<float> result(numel);
+        std::vector<float> result(_config.numel);
 
         cudaError_t err = cudaMemcpy(
             result.data(),
-            data,
-            numel * sizeof(float),
+            buffer.data(),
+            _config.numel * sizeof(float),
             cudaMemcpyDeviceToHost
         );
 
@@ -166,83 +179,5 @@ public:
         }
 
         return result;
-    }
-
-    void reshape(const std::vector<int>& newShape) {
-        validateNewShape(newShape);
-
-        shape = newShape;
-        setStrides();
-    }
-
-    int getNdim() const {
-        return static_cast<int>(shape.size());
-    }
-
-    const std::vector<int>& getShape() const {
-        return shape;
-    }
-
-    const std::vector<size_t>& getStrides() const {
-        return strides;
-    }
-
-    size_t getNumel() const {
-        return numel;
-    }
-
-    void showTabular() {
-        if (shape.size() != 2) {
-            return;
-        }
-
-        const std::vector<float> hostData = toHost();
-
-        const int rows = shape[0];
-        const int cols = shape[1];
-
-        for (int row = 0; row < rows; ++row) {
-            std::cout << "[ ";
-
-            for (int col = 0; col < cols; ++col) {
-                std::cout << hostData[row * cols + col];
-
-                if (col < cols - 1) {
-                    std::cout << ", ";
-                }
-            }
-
-            std::cout << " ]\n";
-        }
-    }
-
-    ~DeviceTensor() {
-        cudaFree(data);
-    }
-
-    DeviceTensor& operator=(const DeviceTensor&) = delete;
-    DeviceTensor(const DeviceTensor&) = delete;
-
-    DeviceTensor(DeviceTensor&& other) noexcept {
-        data = other.data;
-        numel = other.numel;
-        shape = std::move(other.shape);
-        strides = std::move(other.strides);
-
-        other.clear();
-    }
-    DeviceTensor& operator=(DeviceTensor&& other) noexcept {
-        if (this != &other) {
-            cudaFree(data);
-
-            data = other.data;
-            numel = other.numel;
-            shape = std::move(other.shape);
-            strides = std::move(other.strides);
-
-            other.clear();
-        }
-
-        return *this;
     }
 };

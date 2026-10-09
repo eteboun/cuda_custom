@@ -15,8 +15,8 @@ template<
     bool CHECK_K
 >
 __device__ void loadSharedMemory(
-    DeviceTensorView A,
-    DeviceTensorView B,
+    ConstDeviceTensorView A,
+    ConstDeviceTensorView B,
     float (*As)[TILE_K],
     float (*Bs)[TILE_N],
     int tileX,
@@ -237,8 +237,8 @@ template<
     bool CHECK_K
 >
 __device__ void processK(
-    DeviceTensorView A,
-    DeviceTensorView B,
+    ConstDeviceTensorView A,
+    ConstDeviceTensorView B,
     float (*As)[TILE_K],
     float (*Bs)[TILE_N],
     int tileX,
@@ -282,8 +282,8 @@ template<
     bool CHECK_N
 >
 __device__ void processX(
-    DeviceTensorView A,
-    DeviceTensorView B,
+    ConstDeviceTensorView A,
+    ConstDeviceTensorView B,
     DeviceTensorView C,
     float (*As)[TILE_K],
     float (*Bs)[TILE_N],
@@ -353,8 +353,8 @@ template<
     bool CHECK_M
 >
 __device__ void processY(
-    DeviceTensorView A,
-    DeviceTensorView B,
+    ConstDeviceTensorView A,
+    ConstDeviceTensorView B,
     DeviceTensorView C,
     float (*As)[TILE_K],
     float (*Bs)[TILE_N],
@@ -405,8 +405,8 @@ template<
     int BLOCK_Y
 >
 __global__ void deviceMatMul(
-    DeviceTensorView A,
-    DeviceTensorView B,
+    ConstDeviceTensorView A,
+    ConstDeviceTensorView B,
     DeviceTensorView C
 ) {
 

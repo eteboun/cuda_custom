@@ -6,6 +6,8 @@
 
 #include "tensor.cuh"
 #include "matmul.cuh"
+#include "matmul_simt_host.cuh"
+#include "matmul_wmma_host.cuh"
 #include "tests.cuh"
 
 // Returns true if every element matches within a relative tolerance.
@@ -76,7 +78,7 @@ bool runBenchmark(
 
     // Correctness: one separate launch, checked against the CPU result.
     std::vector<float> actual =
-        hostMatmul<TILE_M, TILE_N, TILE_K, BLOCK_X, BLOCK_Y>(A, B).toHost();
+        hostSimtMatmul<TILE_M, TILE_N, TILE_K, BLOCK_X, BLOCK_Y>(A, B).toHost();
     bool passed = compare(actual, expected);
 
     BenchmarkResult result =
@@ -152,8 +154,8 @@ int runSize(
         << std::setw(8) << cpu.gflops << " GFLOP/s\n"
         << std::defaultfloat;
 
-    DeviceTensor A(hostA, { M, K });
-    DeviceTensor B(hostB, { K, N });
+    DeviceTensor A(hostA, { static_cast<size_t>(M), static_cast<size_t>(K) });
+    DeviceTensor B(hostB, { static_cast<size_t>(K), static_cast<size_t>(N) });
 
     int failures = 0;
 
