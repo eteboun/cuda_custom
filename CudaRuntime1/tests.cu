@@ -3,6 +3,7 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <string>
 
 #include "tensor.cuh"
 #include "matmul.cuh"
@@ -47,6 +48,13 @@ struct BestConfig {
     int tileK = 0;
     int blockX = 0;
     int blockY = 0;
+};
+
+struct BestWmmaConfig {
+    double gflops = 0.0;
+    float avgMs = 0.0f;
+    int warpRows = 0;
+    int warpCols = 0;
 };
 
 template<int TILE_M, int TILE_N, int TILE_K, int BLOCK_X, int BLOCK_Y>
@@ -116,6 +124,79 @@ bool runBenchmark(
         << std::defaultfloat;
 
     return passed;
+}
+
+template<int WARP_ROWS, int WARP_COLS>
+bool runWmmaBenchmark(
+    const DeviceTensor& A,
+    const DeviceTensor& B,
+    const std::vector<float>& expected,
+    const BenchmarkResult& cpu,
+    const BenchmarkResult& cublas,
+    BestWmmaConfig& best,
+    int warmupIters,
+    int timedIters
+) {
+    constexpr int threads = 32 * WARP_ROWS * WARP_COLS;
+
+    static_assert(threads <= 1024,
+        "a block cannot have more than 1024 threads");
+
+    // Correctness: one separate run, checked against the CPU result.
+    // The test data are small integers, which fp16 holds exactly, so the
+    // usual tolerance still applies.
+    std::vector<float> actual =
+        hostWmmaMatmul<WARP_ROWS, WARP_COLS>(A, B).toHost();
+    bool passed = compare(actual, expected);
+
+    BenchmarkResult result =
+        benchmarkWmmaMatMul<WARP_ROWS, WARP_COLS>(
+            A, B, warmupIters, timedIters
+        );
+
+    if (passed && result.gflops > best.gflops) {
+        best.gflops = result.gflops;
+        best.avgMs = result.avgMs;
+        best.warpRows = WARP_ROWS;
+        best.warpCols = WARP_COLS;
+    }
+
+    std::cout
+        << "  " << (passed ? "[PASS]" : "[FAIL]")
+        << " wmma    WARPS=" << WARP_ROWS << "x" << WARP_COLS
+        << " threads=" << std::setw(4) << threads
+        << " block tile=" << std::setw(2) << WARP_ROWS * 16
+        << "x" << std::left << std::setw(2) << WARP_COLS * 16 << std::right
+        << " | " << std::fixed << std::setprecision(4)
+        << std::setw(10) << result.avgMs << " ms"
+        << " | " << std::setprecision(1)
+        << std::setw(8) << result.gflops << " GFLOP/s"
+        << " | " << std::setw(7) << cpu.avgMs / result.avgMs << "x CPU"
+        << " | " << std::setw(5) << 100.0 * result.gflops / cublas.gflops
+        << "% cuBLAS\n"
+        << std::defaultfloat;
+
+    return passed;
+}
+
+// One row of the per-size comparison table.
+void printCompareRow(
+    const std::string& label,
+    float avgMs,
+    double gflops,
+    const BenchmarkResult& cpu,
+    const BenchmarkResult& cublas
+) {
+    std::cout
+        << "    " << std::left << std::setw(36) << label << std::right
+        << std::fixed << std::setprecision(4)
+        << std::setw(11) << avgMs << " ms"
+        << " | " << std::setprecision(1)
+        << std::setw(8) << gflops << " GFLOP/s"
+        << " | " << std::setw(8) << cpu.avgMs / avgMs << "x CPU"
+        << " | " << std::setw(6) << 100.0 * gflops / cublas.gflops
+        << "% cuBLAS\n"
+        << std::defaultfloat;
 }
 
 int runSize(
@@ -215,18 +296,43 @@ int runSize(
     failures += !runBenchmark<128, 128,  16,  16,  16>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
     failures += !runBenchmark<128, 128,   8,  32,   8>(A, B, expected, cpu, cublas, best, warmupIters, timedIters);
 
+    // Tensor cores (WMMA, fp16 inputs, fp32 accumulate). Each warp computes
+    // one 16x16 output tile; a block holds WARP_ROWS x WARP_COLS warps.
+    BestWmmaConfig bestWmma;
+
+    std::cout << '\n';
+    failures += !runWmmaBenchmark<1, 1>(A, B, expected, cpu, cublas, bestWmma, warmupIters, timedIters);
+    failures += !runWmmaBenchmark<2, 1>(A, B, expected, cpu, cublas, bestWmma, warmupIters, timedIters);
+    failures += !runWmmaBenchmark<1, 2>(A, B, expected, cpu, cublas, bestWmma, warmupIters, timedIters);
+    failures += !runWmmaBenchmark<2, 2>(A, B, expected, cpu, cublas, bestWmma, warmupIters, timedIters);
+    failures += !runWmmaBenchmark<4, 2>(A, B, expected, cpu, cublas, bestWmma, warmupIters, timedIters);
+    failures += !runWmmaBenchmark<2, 4>(A, B, expected, cpu, cublas, bestWmma, warmupIters, timedIters);
+    failures += !runWmmaBenchmark<4, 4>(A, B, expected, cpu, cublas, bestWmma, warmupIters, timedIters);
+
+    // CPU, cuBLAS, and the best SIMT and WMMA configurations side by side.
+    std::cout << "\n  [COMPARE] "
+        << M << "x" << K << " @ " << K << "x" << N << '\n';
+
+    printCompareRow("CPU (fp32, all threads)",
+        cpu.avgMs, cpu.gflops, cpu, cublas);
+    printCompareRow("cuBLAS sgemm (fp32)",
+        cublas.avgMs, cublas.gflops, cpu, cublas);
+
     if (best.gflops > 0.0) {
-        std::cout
-            << "\n  [BEST] TILE=" << best.tileM
-            << "x" << best.tileN << "x" << best.tileK
-            << " BLOCK=" << best.blockX << "x" << best.blockY
-            << " | " << std::fixed << std::setprecision(4)
-            << best.avgMs << " ms"
-            << " | " << std::setprecision(1)
-            << best.gflops << " GFLOP/s"
-            << " | " << 100.0 * best.gflops / cublas.gflops
-            << "% cuBLAS\n"
-            << std::defaultfloat;
+        printCompareRow(
+            "SIMT best TILE=" + std::to_string(best.tileM) +
+            "x" + std::to_string(best.tileN) +
+            "x" + std::to_string(best.tileK) +
+            " BLOCK=" + std::to_string(best.blockX) +
+            "x" + std::to_string(best.blockY),
+            best.avgMs, best.gflops, cpu, cublas);
+    }
+
+    if (bestWmma.gflops > 0.0) {
+        printCompareRow(
+            "WMMA best WARPS=" + std::to_string(bestWmma.warpRows) +
+            "x" + std::to_string(bestWmma.warpCols) + " (fp16)",
+            bestWmma.avgMs, bestWmma.gflops, cpu, cublas);
     }
 
     return failures;
