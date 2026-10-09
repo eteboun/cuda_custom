@@ -34,9 +34,15 @@ DeviceTensor hostWmmaMatmul(
         );
     }
 
-    size_t Mp = ((M + 15) / 16) * 16;
+    size_t Mp = ((M + 16 * WARP_ROWS - 1)
+        / (16 * WARP_ROWS))
+        * (16 * WARP_ROWS);
+
+    size_t Np = ((N + 16 * WARP_COLS - 1)
+        / (16 * WARP_COLS))
+        * (16 * WARP_COLS);
+
     size_t Kp = ((K + 15) / 16) * 16;
-    size_t Np = ((N + 15) / 16) * 16;
 
     DeviceBuffer<half> Ap(Mp * Kp);
     DeviceBuffer<half> Bp(Kp * Np);
@@ -128,9 +134,16 @@ BenchmarkResult benchmarkWmmaMatMul(
         );
     }
 
-    size_t Mp = ((M + 15) / 16) * 16;
+    // Same padding as hostWmmaMatmul: M and N up to a whole block tile.
+    size_t Mp = ((M + 16 * WARP_ROWS - 1)
+        / (16 * WARP_ROWS))
+        * (16 * WARP_ROWS);
+
+    size_t Np = ((N + 16 * WARP_COLS - 1)
+        / (16 * WARP_COLS))
+        * (16 * WARP_COLS);
+
     size_t Kp = ((K + 15) / 16) * 16;
-    size_t Np = ((N + 15) / 16) * 16;
 
     DeviceBuffer<half> Ap(Mp * Kp);
     DeviceBuffer<half> Bp(Kp * Np);
