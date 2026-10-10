@@ -62,17 +62,18 @@ DeviceTensor hostWmmaMatmul(
     if (err != cudaSuccess)
         throw std::runtime_error(cudaGetErrorString(err));
 
-    constexpr int WARPS_PER_BLOCK =
-        WARP_ROWS * WARP_COLS;
+    // One warp per row of threads: x covers a warp, y the warps.
+    constexpr int BLOCK_X = WARP_SIZE;
+    constexpr int BLOCK_Y = WARP_ROWS * WARP_COLS;
 
-    dim3 block(32, WARPS_PER_BLOCK);
+    dim3 block(BLOCK_X, BLOCK_Y);
 
     dim3 grid(
         (Np + WARP_COLS * 16 - 1) / (WARP_COLS * 16),
         (Mp + WARP_ROWS * 16 - 1) / (WARP_ROWS * 16)
     );
 
-    wmmaMatmul<WARP_ROWS, WARP_COLS><<<grid, block>>>(
+    wmmaMatmul<BLOCK_X, BLOCK_Y, WARP_ROWS, WARP_COLS><<<grid, block>>>(
         Ap.data(), Bp.data(), Cp.data(),
         Mp, Np, Kp
         );
@@ -169,10 +170,11 @@ BenchmarkResult benchmarkWmmaMatMul(
         );
     }
 
-    constexpr int WARPS_PER_BLOCK =
-        WARP_ROWS * WARP_COLS;
+    // One warp per row of threads: x covers a warp, y the warps.
+    constexpr int BLOCK_X = WARP_SIZE;
+    constexpr int BLOCK_Y = WARP_ROWS * WARP_COLS;
 
-    dim3 block(32, WARPS_PER_BLOCK);
+    dim3 block(BLOCK_X, BLOCK_Y);
 
     dim3 grid(
         (Np + WARP_COLS * 16 - 1) / (WARP_COLS * 16),
@@ -181,7 +183,7 @@ BenchmarkResult benchmarkWmmaMatMul(
 
     // Warm-up launches: absorb one-time costs (module load, caches).
     for (int i = 0; i < warmupIters; i++) {
-        wmmaMatmul<WARP_ROWS, WARP_COLS><<<grid, block>>>(
+        wmmaMatmul<BLOCK_X, BLOCK_Y, WARP_ROWS, WARP_COLS><<<grid, block>>>(
             Ap.data(), Bp.data(), Cp.data(),
             Mp, Np, Kp
             );
@@ -211,7 +213,7 @@ BenchmarkResult benchmarkWmmaMatMul(
     cudaEventRecord(start.get());
 
     for (int i = 0; i < timedIters; i++) {
-        wmmaMatmul<WARP_ROWS, WARP_COLS><<<grid, block>>>(
+        wmmaMatmul<BLOCK_X, BLOCK_Y, WARP_ROWS, WARP_COLS><<<grid, block>>>(
             Ap.data(), Bp.data(), Cp.data(),
             Mp, Np, Kp
             );

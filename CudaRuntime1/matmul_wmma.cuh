@@ -32,7 +32,12 @@ __global__ void postProcess(
     size_t Np
 );
 
-template<int WARP_ROWS, int WARP_COLS>
+template<
+    int BLOCK_X,
+    int BLOCK_Y,
+    int WARP_ROWS,
+    int WARP_COLS
+>
 __device__ void loadSharedMemory(
     half As[][16],
     half Bs[][16 * WARP_COLS],
@@ -44,26 +49,47 @@ __device__ void loadSharedMemory(
     const int globalWarpCol,
     int k
 ) {
-    int tId = threadIdx.y * blockDim.x + threadIdx.x;
+    constexpr int stride = BLOCK_X * BLOCK_Y;
 
-    for (int i = tId;
-        i < 256 * WARP_ROWS;
-        i += blockDim.x * blockDim.y)
+    // Fixed round counts, rounded up. When a tile does not split evenly
+    // over the block, the last round is partial and the guard stops the
+    // threads past the tile; otherwise the guard compiles away.
+    constexpr int aElems = 256 * WARP_ROWS;
+    constexpr int rowIters = (aElems + stride - 1) / stride;
+    #pragma unroll
+    for (int i = 0;
+        i < rowIters;
+        i++)
     {
-        int r = i / 16;
-        int c = i % 16;
+        int tId = threadIdx.y * BLOCK_X + threadIdx.x + i * stride;
+
+        if constexpr (aElems % stride != 0) {
+            if (tId >= aElems) break;
+        }
+
+        int r = tId / 16;
+        int c = tId % 16;
 
         As[r][c] =
             Ap[(globalWarpRow * 16 + r) * Kp
             + k * 16 + c];
     }
 
-    for (int i = tId;
-        i < 256 * WARP_COLS;
-        i += blockDim.x * blockDim.y)
+    constexpr int bElems = 256 * WARP_COLS;
+    constexpr int colIters = (bElems + stride - 1) / stride;
+    #pragma unroll
+    for (int i = 0;
+        i < colIters;
+        i++)
     {
-        int r = i / (16 * WARP_COLS);
-        int c = i % (16 * WARP_COLS);
+        int tId = threadIdx.y * BLOCK_X + threadIdx.x + i * stride;
+
+        if constexpr (bElems % stride != 0) {
+            if (tId >= bElems) break;
+        }
+
+        int r = tId / (16 * WARP_COLS);
+        int c = tId % (16 * WARP_COLS);
 
         Bs[r][c] =
             Bp[(k * 16 + r) * Np
@@ -71,7 +97,12 @@ __device__ void loadSharedMemory(
     }
 }
 
-template<int WARP_ROWS, int WARP_COLS>
+template<
+    int BLOCK_X,
+    int BLOCK_Y,
+    int WARP_ROWS,
+    int WARP_COLS
+>
 __device__ void processMatmul(
     const half* Ap,
     const half* Bp,
@@ -85,7 +116,7 @@ __device__ void processMatmul(
     __shared__ half As[16 * WARP_ROWS][16];
     __shared__ half Bs[16][16 * WARP_COLS];
 
-    int tId = threadIdx.y * blockDim.x + threadIdx.x;
+    int tId = threadIdx.y * BLOCK_X + threadIdx.x;
     int warpId = tId / WARP_SIZE;
 
     int localWarpRow = warpId / WARP_COLS;
@@ -116,7 +147,12 @@ __device__ void processMatmul(
     int kIters = Kp / 16;
     for (int k = 0; k < kIters; k++)
     {
-        loadSharedMemory<WARP_ROWS, WARP_COLS>(
+        loadSharedMemory<
+            BLOCK_X,
+            BLOCK_Y,
+            WARP_ROWS,
+            WARP_COLS
+        >(
             As, Bs,
             Ap, Bp,
             Kp, Np,
@@ -154,7 +190,12 @@ __device__ void processMatmul(
     );
 }
 
-template<int WARP_ROWS, int WARP_COLS>
+template<
+    int BLOCK_X,
+    int BLOCK_Y,
+    int WARP_ROWS,
+    int WARP_COLS
+>
 __global__ void wmmaMatmul(
     const half* Ap,
     const half* Bp,
@@ -163,6 +204,11 @@ __global__ void wmmaMatmul(
     const size_t Np,
     const size_t Kp
 ) {
+    // One warp per 16x16 output tile: the block must hold exactly
+    // WARP_ROWS x WARP_COLS warps.
+    static_assert(BLOCK_X * BLOCK_Y == WARP_SIZE * WARP_ROWS * WARP_COLS,
+        "BLOCK_X * BLOCK_Y must equal 32 * WARP_ROWS * WARP_COLS");
+
     int rowStride = gridDim.y * WARP_ROWS;
     int colStride = gridDim.x * WARP_COLS;
 
@@ -177,7 +223,12 @@ __global__ void wmmaMatmul(
             globalWarpCol < colIters;
             globalWarpCol += colStride)
         {
-            processMatmul<WARP_ROWS, WARP_COLS>(
+            processMatmul<
+                BLOCK_X,
+                BLOCK_Y,
+                WARP_ROWS,
+                WARP_COLS
+            >(
                 Ap, Bp, Cp,
                 Mp, Np, Kp,
                 globalWarpRow, globalWarpCol
