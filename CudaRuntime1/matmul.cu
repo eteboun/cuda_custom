@@ -5,8 +5,10 @@
 #include <stdexcept>
 #include <string>
 
+#include <cuda_fp16.h>
 #include <cublas_v2.h>
 
+#include "buffer.cuh"
 #include "matmul.cuh"
 
 // Link cuBLAS without touching the project's linker settings.
@@ -147,14 +149,30 @@ public:
     }
 };
 
+// fp32 -> fp16 copy of a whole buffer, so cuBLAS gets the same fp16
+// inputs the WMMA kernel uses.
+static __global__ void floatToHalf(
+    const float* src,
+    half* dst,
+    size_t n
+) {
+    size_t idx = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    size_t stride = size_t(blockDim.x) * gridDim.x;
+
+    for (size_t i = idx; i < n; i += stride) {
+        dst[i] = __float2half(src[i]);
+    }
+}
+
 // cuBLAS is column-major, our tensors are row-major.
 // A row-major matrix read as column-major is its transpose, so
 // C = A * B (row-major) is the same memory as C^T = B^T * A^T (column-major).
 // Passing B first and A second computes exactly that, with no copies.
-static void cublasRowMajorSgemm(
+// Inputs are fp16, accumulation and output are fp32, like the WMMA kernel.
+static void cublasRowMajorGemmEx(
     cublasHandle_t handle,
-    const float* A,
-    const float* B,
+    const half* A,
+    const half* B,
     float* C,
     int M,
     int K,
@@ -164,17 +182,19 @@ static void cublasRowMajorSgemm(
     const float beta = 0.0f;
 
     checkCublas(
-        cublasSgemm(
+        cublasGemmEx(
             handle,
             CUBLAS_OP_N, CUBLAS_OP_N,
             N, M, K,
             &alpha,
-            B, N,
-            A, K,
+            B, CUDA_R_16F, N,
+            A, CUDA_R_16F, K,
             &beta,
-            C, N
+            C, CUDA_R_32F, N,
+            CUBLAS_COMPUTE_32F,
+            CUBLAS_GEMM_DEFAULT
         ),
-        "cublasSgemm"
+        "cublasGemmEx"
     );
 }
 
@@ -206,10 +226,27 @@ BenchmarkResult benchmarkCublasMatMul(
         );
     }
 
-    // cublasSgemm takes int dimensions.
+    // cublasGemmEx takes int dimensions.
     int M = static_cast<int>(a.shape[0]);
     int K = static_cast<int>(a.shape[1]);
     int N = static_cast<int>(b.shape[1]);
+
+    // Convert the inputs to fp16 once, before timing, as the WMMA
+    // benchmark does with preProcess.
+    DeviceBuffer<half> aHalf(a.shape[0] * a.shape[1]);
+    DeviceBuffer<half> bHalf(b.shape[0] * b.shape[1]);
+
+    floatToHalf<<<256, 256>>>(a.data, aHalf.data(), aHalf.size());
+    floatToHalf<<<256, 256>>>(b.data, bHalf.data(), bHalf.size());
+
+    cudaError_t err = cudaGetLastError();
+
+    if (err != cudaSuccess) {
+        throw std::runtime_error(
+            std::string("fp16 conversion launch failed: ") +
+            cudaGetErrorString(err)
+        );
+    }
 
     DeviceTensor deviceC({ a.shape[0], b.shape[1] });
 
@@ -220,10 +257,12 @@ BenchmarkResult benchmarkCublasMatMul(
 
     // Warm-up also absorbs cuBLAS's one-time kernel selection and loading.
     for (int i = 0; i < warmupIters; i++) {
-        cublasRowMajorSgemm(handle.get(), a.data, b.data, c, M, K, N);
+        cublasRowMajorGemmEx(
+            handle.get(), aHalf.data(), bHalf.data(), c, M, K, N
+        );
     }
 
-    cudaError_t err = cudaDeviceSynchronize();
+    err = cudaDeviceSynchronize();
 
     if (err != cudaSuccess) {
         throw std::runtime_error(
@@ -238,7 +277,9 @@ BenchmarkResult benchmarkCublasMatMul(
     cudaEventRecord(start.get());
 
     for (int i = 0; i < timedIters; i++) {
-        cublasRowMajorSgemm(handle.get(), a.data, b.data, c, M, K, N);
+        cublasRowMajorGemmEx(
+            handle.get(), aHalf.data(), bHalf.data(), c, M, K, N
+        );
     }
 
     cudaEventRecord(stop.get());

@@ -30,8 +30,9 @@ BenchmarkResult benchmarkCpuMatMul(
     std::vector<float>& C
 );
 
-// Times cublasSgemm on the same tensors (matmul.cu) and writes its output
-// to C (host) for correctness checks.
+// Times cublasGemmEx (fp16 inputs, fp32 accumulate and output) on the same
+// tensors (matmul.cu) and writes its output to C (host) for correctness
+// checks. The fp32 -> fp16 conversion runs once, outside the timing.
 BenchmarkResult benchmarkCublasMatMul(
     const DeviceTensor& A,
     const DeviceTensor& B,

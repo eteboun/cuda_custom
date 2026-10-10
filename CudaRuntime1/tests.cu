@@ -315,7 +315,7 @@ int runSize(
 
     printCompareRow("CPU (fp32, all threads)",
         cpu.avgMs, cpu.gflops, cpu, cublas);
-    printCompareRow("cuBLAS sgemm (fp32)",
+    printCompareRow("cuBLAS gemmEx (fp16 in, fp32 out)",
         cublas.avgMs, cublas.gflops, cpu, cublas);
 
     if (best.gflops > 0.0) {
