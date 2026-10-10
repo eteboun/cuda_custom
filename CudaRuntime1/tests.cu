@@ -106,7 +106,7 @@ bool runBenchmark(
 
     std::cout
         << "  " << (passed ? "[PASS]" : "[FAIL]")
-        << " " << std::left << std::setw(7) << kind << std::right
+        << " simt " << std::left << std::setw(7) << kind << std::right
         << " TILE=" << std::setw(3) << TILE_M
         << "x" << std::setw(3) << TILE_N
         << "x" << std::setw(2) << TILE_K
