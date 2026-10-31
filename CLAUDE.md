@@ -1,14 +1,14 @@
-# CudaRuntime1 – CUDA matmul öğrenme projesi
+# CudaRuntime1 – CUDA matmul learning project
 
-## Derleme ve çalıştırma
-- scripts\test.bat (derle + test), scripts\profile.bat [simt|wmma|both]
-- Elle (CudaRuntime1/ klasöründen): nvcc -O3 -arch=sm_89 -lineinfo -Isrc/core -Isrc/reference -Isrc/simt -Isrc/wmma -Itests tests/main.cu tests/tests.cu src/reference/matmul.cu src/wmma/matmul_wmma.cu src/core/utils.cpp -o test.exe
-- GPU: RTX 4070 Laptop (sm_89). Benchmark için Release kullan, Debug (-G) değil.
-- Profil: scripts\profile.bat (ncu yönetici yetkisi ister), raporlar profiles/ içinde.
+## Build and run
+- scripts\test.bat (build + test), scripts\profile.bat [simt|wmma|both]
+- Manually (from the CudaRuntime1/ folder): nvcc -O3 -arch=sm_89 -lineinfo -Isrc/core -Isrc/reference -Isrc/simt -Isrc/wmma -Itests tests/main.cu tests/tests.cu src/reference/matmul.cu src/wmma/matmul_wmma.cu src/core/utils.cpp -o test.exe
+- GPU: RTX 4070 Laptop (sm_89). Use Release for benchmarks, not Debug (-G).
+- Profiling: scripts\profile.bat (ncu needs admin rights), reports go to profiles/.
 
-## Kod stili
-- Girinti 4 boşluk, tab yok.
+## Code style
+- 4-space indentation, no tabs.
 
-## Çalışma şekli
-- Bu bir öğrenme reposu: ben istemeden kod değiştirme, önce kontrol edip söyle.
-- Commit'e sadece kaynak dosyaları gir (exe ve .ncu-repz hariç).
+## Workflow
+- This is a learning repo: don't change code unless I ask; check first and tell me.
+- Only commit source files (no exe or .ncu-repz).
