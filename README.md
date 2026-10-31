@@ -37,3 +37,23 @@ scripts\profile.bat [simt|wmma]  :: Nsight Compute profile (needs admin rights)
 ```
 
 Requirements: CUDA Toolkit (nvcc, cuBLAS) and MSVC. Adjust the `-ccbin` path in the scripts to your own Visual Studio installation.
+
+## Results
+
+WMMA kernel vs. cuBLAS `GemmEx`, both with fp16 inputs and fp32 accumulation/output. One run of `scripts\test.bat` on an RTX 4070 Laptop GPU (CUDA 13.4, driver 616.92, `-O3 -arch=sm_89`); square matrices, average kernel time, all configurations passed the correctness check. "WMMA best" is the fastest warp layout in the sweep for that size.
+
+| Size | WMMA best | cuBLAS GemmEx | WMMA / cuBLAS |
+|---|---|---|---|
+| 512³  | 0.029 ms · 9.3 TFLOP/s (`WARPS=4x4`)  | 0.020 ms · 13.3 TFLOP/s | 70% |
+| 2048³ | 1.29 ms · 13.3 TFLOP/s (`WARPS=4x2`)  | 0.44 ms · 38.9 TFLOP/s  | 34% |
+| 4096³ | 11.99 ms · 11.5 TFLOP/s (`WARPS=4x2`) | 5.59 ms · 24.6 TFLOP/s  | 47% |
+
+## Benchmark limitations
+
+This is a learning project and the benchmark is deliberately simple. Treat the numbers as rough, relative indicators, not rigorous measurements:
+
+- **Single run, no variance.** Each number is one average with no repeats or standard deviation. Laptop GPU clocks are not locked, so boost and thermal/power throttling move results between runs. Example: cuBLAS drops from 38.9 to 24.6 TFLOP/s going from 2048³ to 4096³.
+- **Optimistic "best".** Picking the fastest of seven noisy warp layouts biases the WMMA result upward.
+- **Kernel time only.** Host↔device copies, the fp32→fp16 conversion and the WMMA padding are not timed.
+- **Warm caches, back-to-back launches.** The same inputs run repeatedly between one pair of CUDA events. At 512³ the whole working set fits in L2 and launch overhead is a noticeable part of a ~30 µs kernel.
+- **Narrow coverage.** Only square power-of-two sizes. The test data are small integers that fp16 represents exactly, so the correctness check does not stress fp16 rounding error.
