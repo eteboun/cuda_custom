@@ -46,9 +46,6 @@
     <ClInclude Include="src\core\buffer.cuh">
       <Filter>src\core</Filter>
     </ClInclude>
-    <ClInclude Include="src\core\l2_flush.cuh">
-      <Filter>src\core</Filter>
-    </ClInclude>
     <ClInclude Include="src\core\tensor.cuh">
       <Filter>src\core</Filter>
     </ClInclude>

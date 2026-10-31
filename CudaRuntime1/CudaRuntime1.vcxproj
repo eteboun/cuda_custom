@@ -89,7 +89,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\core\buffer.cuh" />
-    <ClInclude Include="src\core\l2_flush.cuh" />
     <ClInclude Include="src\core\tensor.cuh" />
     <ClInclude Include="src\core\utils.h" />
     <ClInclude Include="src\reference\matmul.cuh" />

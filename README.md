@@ -9,7 +9,7 @@ Target hardware: RTX 4070 Laptop GPU (sm_89).
 ```
 CudaRuntime1/
 ├── src/
-│   ├── core/        DeviceBuffer, DeviceTensor, L2Flusher
+│   ├── core/        DeviceBuffer, DeviceTensor
 │   ├── reference/   CPU matmul and cuBLAS baseline
 │   ├── simt/        Tiled matmul on CUDA cores
 │   └── wmma/        Tensor core (WMMA) matmul
