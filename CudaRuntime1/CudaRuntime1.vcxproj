@@ -47,6 +47,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;WIN64;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\core;$(ProjectDir)src\reference;$(ProjectDir)src\simt;$(ProjectDir)src\wmma;$(ProjectDir)tests;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -64,6 +65,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;WIN64;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\core;$(ProjectDir)src\reference;$(ProjectDir)src\simt;$(ProjectDir)src\wmma;$(ProjectDir)tests;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -77,28 +79,29 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CudaCompile Include="main.cu" />
-    <CudaCompile Include="matmul.cu" />
-    <CudaCompile Include="matmul_wmma.cu" />
-    <CudaCompile Include="tests.cu" />
-    <CudaCompile Include="tensor.cuh">
-      <FileType>Document</FileType>
-    </CudaCompile>
+    <CudaCompile Include="tests\main.cu" />
+    <CudaCompile Include="tests\tests.cu" />
+    <CudaCompile Include="src\reference\matmul.cu" />
+    <CudaCompile Include="src\wmma\matmul_wmma.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="matmul.cuh" />
-    <ClCompile Include="utils.cpp" />
+    <ClCompile Include="src\core\utils.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="matmul_simt.cuh" />
-    <ClInclude Include="matmul_simt_host.cuh" />
-    <ClInclude Include="matmul_wmma.cuh" />
-    <ClInclude Include="matmul_wmma_host.cuh" />
-    <ClInclude Include="tests.cuh" />
-    <ClInclude Include="utils.h" />
+    <ClInclude Include="src\core\buffer.cuh" />
+    <ClInclude Include="src\core\l2_flush.cuh" />
+    <ClInclude Include="src\core\tensor.cuh" />
+    <ClInclude Include="src\core\utils.h" />
+    <ClInclude Include="src\reference\matmul.cuh" />
+    <ClInclude Include="src\simt\matmul_simt.cuh" />
+    <ClInclude Include="src\simt\matmul_simt_host.cuh" />
+    <ClInclude Include="src\wmma\matmul_wmma.cuh" />
+    <ClInclude Include="src\wmma\matmul_wmma_host.cuh" />
+    <ClInclude Include="tests\tests.cuh" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="profile.bat" />
+    <None Include="scripts\profile.bat" />
+    <None Include="scripts\test.bat" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

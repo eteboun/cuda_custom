@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="scripts">
+      <UniqueIdentifier>{769ef4ca-5f57-5483-b3a9-fb73c0d0c596}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src">
+      <UniqueIdentifier>{a5b72a90-5c9c-5e18-ae37-5d0bcb8e0940}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\core">
+      <UniqueIdentifier>{a7a1b217-c149-5263-8a11-ae4a02c94078}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\reference">
+      <UniqueIdentifier>{3750f6fb-6a54-558e-abda-e52693ec155d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\simt">
+      <UniqueIdentifier>{bfbbbaef-85ab-56ce-9c30-7d036e5d9389}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\wmma">
+      <UniqueIdentifier>{7cc95457-8a07-5eb2-92a2-4a40a2e51bbd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="tests">
+      <UniqueIdentifier>{3a9f8fc5-ac96-5cbc-a0cd-f3f73162ce99}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="tests\main.cu">
+      <Filter>tests</Filter>
+    </CudaCompile>
+    <CudaCompile Include="tests\tests.cu">
+      <Filter>tests</Filter>
+    </CudaCompile>
+    <CudaCompile Include="src\reference\matmul.cu">
+      <Filter>src\reference</Filter>
+    </CudaCompile>
+    <CudaCompile Include="src\wmma\matmul_wmma.cu">
+      <Filter>src\wmma</Filter>
+    </CudaCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\core\utils.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\core\buffer.cuh">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\l2_flush.cuh">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\tensor.cuh">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\utils.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\reference\matmul.cuh">
+      <Filter>src\reference</Filter>
+    </ClInclude>
+    <ClInclude Include="src\simt\matmul_simt.cuh">
+      <Filter>src\simt</Filter>
+    </ClInclude>
+    <ClInclude Include="src\simt\matmul_simt_host.cuh">
+      <Filter>src\simt</Filter>
+    </ClInclude>
+    <ClInclude Include="src\wmma\matmul_wmma.cuh">
+      <Filter>src\wmma</Filter>
+    </ClInclude>
+    <ClInclude Include="src\wmma\matmul_wmma_host.cuh">
+      <Filter>src\wmma</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\tests.cuh">
+      <Filter>tests</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="scripts\profile.bat">
+      <Filter>scripts</Filter>
+    </None>
+    <None Include="scripts\test.bat">
+      <Filter>scripts</Filter>
+    </None>
+  </ItemGroup>
+</Project>
